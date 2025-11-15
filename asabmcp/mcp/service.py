@@ -94,8 +94,7 @@ class MCPService(asab.Service):
 				"version": "25.11.0",
 			},
 			"instructions": (
-				"ASAB MCP server is ready. No tools or resources are announced yet, "
-				"but the connection can now be used to call RPC methods."
+				"ASAB MCP server is ready."
 			),
 			"capabilities": capabilities,
 		}

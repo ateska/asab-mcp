@@ -24,6 +24,7 @@ class MarkdownNotesMCPHandler():
 
 		self.App.MCPService.add_tool(self.tool_create_or_update_note)
 		self.App.MCPService.add_tool(self.tool_delete_note)
+		self.App.MCPService.add_tool(self.tool_read_note)
 
 		self.App.MCPService.add_tool(self.tool_list_notes)
 
@@ -36,6 +37,8 @@ class MarkdownNotesMCPHandler():
 		title="Create or update a note",
 		description="""
 			Create a new Markdown note or update the existing Markdown note at the given path with the given content.
+			The note path can contain subdirectories, separated by '/'.
+			Subdirectories are created if they do not exist.
 			The result is a resource link to the created or updated note.
 		""",
 		inputSchema={
@@ -78,7 +81,12 @@ class MarkdownNotesMCPHandler():
 	@mcp_tool(
 		name="delete_note",
 		title="Delete a note",
-		description="Delete the note with the given path. The result is a resource link to the deleted note.",
+		description="""
+			Delete the note with the given path.
+			The note path can contain subdirectories, separated by '/'.
+			Subdirectories are not deleted.
+			The result is a message indicating that the note was deleted.
+		""",
 		inputSchema={
 			"type": "object",
 			"properties": {
@@ -110,7 +118,12 @@ class MarkdownNotesMCPHandler():
 	@mcp_tool(
 		name="list_notes",
 		title="List notes in a directory",
-		description="List all Markdown notes in the given directory",
+		description="""
+			List all Markdown notes in the given directory.
+			The result is a list of resource links to the notes.
+			The resource links can be used as path to read the note content or other tools.
+			To list a root directory, use an empty string or '/' for the directory.
+		""",
 		inputSchema={
 			"type": "object",
 			"properties": {
@@ -137,6 +150,37 @@ class MarkdownNotesMCPHandler():
 				mimeType=NOTE_MIME_TYPE,
 			) for note in os.listdir(directory_path) if note.endswith(NOTE_EXTENSION)
 		]
+
+
+	@mcp_tool(
+		name="read_note",
+		title="Read a note",
+		description="Read the content of the note with the given path. The result is the content of the note in Markdown format.",
+		inputSchema={
+			"type": "object",
+			"properties": {
+				"path": {"type": "string"},
+			},
+		},
+	)
+	async def tool_read_note(self, path):
+		if '..' in path:
+			raise ValueError("Path cannot contain '..'")
+
+		while path.startswith('/'):
+			path = path[1:]
+
+		if not path.endswith(NOTE_EXTENSION):
+			path += NOTE_EXTENSION
+
+		note_path = os.path.join(self.NotesDirectory, path)
+		if not os.path.isfile(note_path):
+			raise ValueError(f"Note {path} does not exist")
+
+		with open(note_path, "r") as f:
+			content = f.read()
+
+		return content
 
 
 	@mcp_resource_template(
