@@ -295,13 +295,14 @@ class MarkdownNotesMCPHandler():
 			f.write(content)
 
 		# Determine MIME type based on extension
+		mime_type = None
 		if path.endswith(".png"):
 			mime_type = "image/png"
 		elif path.endswith(".jpg"):
 			mime_type = "image/jpeg"
 		elif path.endswith(".gif"):
 			mime_type = "image/gif"
-		else:
+		if mime_type is None:
 			raise ValueError(f"Unsupported picture extension: {path}")
 		
 		return MCPToolResultResourceLink(
