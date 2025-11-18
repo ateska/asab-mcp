@@ -190,7 +190,7 @@ class MarkdownNotesMCPHandler():
 
 		if directories:
 			dirlist = list(dir for dir in os.listdir(directory_path) if os.path.isdir(os.path.join(directory_path, dir)) and not dir.startswith('.'))
-			summary += f"\n Found {len(dirlist)} director{'ies' if len(dirlist) != 1 else 'y'} in {dirlist}:\n\n"
+			summary += f"\nFound {len(dirlist)} director{'ies' if len(dirlist) != 1 else 'y'} in {dir_display}:\n\n"
 			for directory in sorted(dirlist):
 				summary += f" * `{directory}`\n"
 
