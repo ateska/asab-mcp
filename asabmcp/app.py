@@ -14,6 +14,9 @@ L = logging.getLogger(__name__)
 #
 
 asab.Config.add_defaults({
+	"general": {
+		"notes": "notes",
+	},
 	"web": {
 		"listen": "8898",
 	},

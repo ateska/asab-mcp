@@ -10,8 +10,10 @@ L = logging.getLogger(__name__)
 
 
 NOTE_URI_PREFIX = "note://"
+PICTURE_URI_PREFIX="img://"
 NOTE_MIME_TYPE = "text/markdown"
 NOTE_EXTENSION = ".md"
+PICTURE_EXTENSIONS = {".jpg", ".png", ".jpeg", ".gif"}
 
 
 class MarkdownNotesMCPHandler():
@@ -19,12 +21,15 @@ class MarkdownNotesMCPHandler():
 	def __init__(self, app):
 		self.App = app
 
-		self.NotesDirectory = "notes"  # TODO: Make configurable
+		self.NotesDirectory = asab.Config.get("general", "notes", fallback="notes")
+
 		os.makedirs(self.NotesDirectory, exist_ok=True)
 
 		self.App.MCPService.add_tool(self.tool_create_or_update_note)
 		self.App.MCPService.add_tool(self.tool_delete_note)
 		self.App.MCPService.add_tool(self.tool_read_note)
+
+		self.App.MCPService.add_tool(self.tool_upload_picture)
 
 		self.App.MCPService.add_tool(self.tool_list_notes)
 
@@ -148,7 +153,7 @@ class MarkdownNotesMCPHandler():
 				name=f"{directory}/{note}",
 				description="Markdown note",
 				mimeType=NOTE_MIME_TYPE,
-			) for note in os.listdir(directory_path) if note.endswith(NOTE_EXTENSION)
+			) for note in os.listdir(directory_path) if note.endswith(NOTE_EXTENSION) and not note.startswith('.')
 		]
 
 
@@ -182,6 +187,47 @@ class MarkdownNotesMCPHandler():
 
 		return content
 
+
+	@mcp_tool(
+		name="upload_picture",
+		title="Upload a picture",
+		description="""
+			Upload a picture to the notes directory.
+			The picture path can contain subdirectories, separated by '/'.
+			Subdirectories are created if they do not exist.
+			Supported picture extensions are: {}.
+			The result is a resource link to the uploaded picture.
+		""".format(PICTURE_EXTENSIONS),
+		inputSchema={
+			"type": "object",
+			"properties": {
+				"path": {"type": "string"},
+				"content": {"type": "string", "format": "binary"},
+			},
+		},
+	)
+	async def tool_upload_picture(self, path, content):
+		if '..' in path:
+			raise ValueError("Path cannot contain '..'")
+
+		while path.startswith('/'):
+			path = path[1:]
+
+		if not any(path.endswith(ext) for ext in PICTURE_EXTENSIONS):
+			raise ValueError(f"Unsupported picture extension. Supported extensions are: {PICTURE_EXTENSIONS}")
+
+		picture_path = os.path.join(self.NotesDirectory, path)
+		os.makedirs(os.path.dirname(picture_path), exist_ok=True)
+
+		with open(picture_path, "w") as f:
+			f.write(content)
+
+		return MCPToolResultResourceLink(
+			uri=f"{PICTURE_URI_PREFIX}/{path}",
+			name=path,
+			description="Picture",
+			mimeType="image/jpeg",
+		)
 
 	@mcp_resource_template(
 		uri_prefix=NOTE_URI_PREFIX,
