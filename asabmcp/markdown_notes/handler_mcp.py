@@ -4,7 +4,7 @@ import logging
 import asab
 
 from ..mcp import mcp_tool, mcp_resource_template
-from ..mcp.datacls import MCPToolResultResourceLink
+from ..mcp.datacls import MCPToolResultResourceLink, MCPToolResultTextContent
 
 L = logging.getLogger(__name__)
 
@@ -41,10 +41,18 @@ class MarkdownNotesMCPHandler():
 		name="create_or_update_note",
 		title="Create or update a note",
 		description="""
-			Create a new Markdown note or update the existing Markdown note at the given path with the given content.
-			The note path can contain subdirectories, separated by '/'.
-			Subdirectories are created if they do not exist.
-			The result is a resource link to the created or updated note.
+			Create a new Markdown note or update an existing Markdown note at the given path with the provided content.
+			
+			The path parameter specifies the note location:
+			- Can include subdirectories separated by '/' (e.g., "projects/meeting-notes")
+			- The '.md' extension is automatically appended if not provided
+			- Leading slashes are normalized
+			- Subdirectories are automatically created if they don't exist
+			- Paths containing '..' are not allowed for security reasons
+			
+			The content parameter should contain valid Markdown text.
+			
+			Returns a resource link that can be used to reference the created or updated note.
 		""",
 		inputSchema={
 			"type": "object",
@@ -56,7 +64,7 @@ class MarkdownNotesMCPHandler():
 	)
 	async def tool_create_or_update_note(self, path, content):
 		if '..' in path:
-			raise ValueError("Path cannot contain '..'")
+			raise ValueError("Path cannot contain '..' (parent directory references are not allowed for security reasons)")
 
 		while path.startswith('/'):
 			path = path[1:]
@@ -87,10 +95,18 @@ class MarkdownNotesMCPHandler():
 		name="delete_note",
 		title="Delete a note",
 		description="""
-			Delete the note with the given path.
-			The note path can contain subdirectories, separated by '/'.
-			Subdirectories are not deleted.
-			The result is a message indicating that the note was deleted.
+			Delete a Markdown note at the specified path.
+			
+			The path parameter:
+			- Can include subdirectories separated by '/' (e.g., "projects/old-note")
+			- The '.md' extension is automatically appended if not provided
+			- Leading slashes are normalized
+			- Paths containing '..' are not allowed for security reasons
+			
+			Note: Only the note file is deleted. Empty subdirectories are left intact.
+			If the note does not exist, an error will be raised.
+			
+			Returns a confirmation message indicating successful deletion.
 		""",
 		inputSchema={
 			"type": "object",
@@ -101,7 +117,7 @@ class MarkdownNotesMCPHandler():
 	)
 	async def tool_delete_note(self, path):
 		if '..' in path:
-			raise ValueError("Path cannot contain '..'")
+			raise ValueError("Path cannot contain '..' (parent directory references are not allowed for security reasons)")
 
 		while path.startswith('/'):
 			path = path[1:]
@@ -111,23 +127,35 @@ class MarkdownNotesMCPHandler():
 
 		note_path = os.path.join(self.NotesDirectory, path)
 		if not os.path.isfile(note_path):
-			raise ValueError(f"Note {path} does not exist")
+			raise ValueError(f"Note '{path}' does not exist. Use 'list_notes' to see available notes.")
 
 		os.remove(note_path)
 
 		L.log(asab.LOG_NOTICE, "Deleted a Markdown note", struct_data={"path": path})
 
-		return "Note deleted."
+		return f"Successfully deleted note: {path}"
 
 
 	@mcp_tool(
 		name="list_notes",
 		title="List notes in a directory",
 		description="""
-			List all Markdown notes in the given directory.
-			The result is a list of resource links to the notes.
-			The resource links can be used as path to read the note content or other tools.
-			To list a root directory, use an empty string or '/' for the directory.
+			List all Markdown notes (.md files) in the specified directory.
+			
+			The directory parameter:
+			- Use an empty string or '/' to list notes in the root notes directory
+			- Can include subdirectories separated by '/' (e.g., "projects/2024")
+			- Leading slashes are normalized
+			- Paths containing '..' are not allowed for security reasons
+			- Only lists direct children (does not recursively search subdirectories)
+			- Hidden files (starting with '.') are excluded
+			
+			Returns:
+			- A text summary listing all notes found in the directory
+			- Resource links for each note that can be used with 'read_note' or other tools
+			- The resource link URI or name field can be used as the path parameter in other operations
+			
+			If the directory is empty or doesn't exist, an appropriate message will be returned.
 		""",
 		inputSchema={
 			"type": "object",
@@ -138,29 +166,64 @@ class MarkdownNotesMCPHandler():
 	)
 	async def tool_list_notes(self, directory=""):
 		if '..' in directory:
-			raise ValueError("Directory cannot contain '..'")
+			raise ValueError("Directory cannot contain '..' (parent directory references are not allowed for security reasons)")
 
 		while directory.startswith('/'):
 			directory = directory[1:]
 
 		directory_path = os.path.join(self.NotesDirectory, directory)
 		if not os.path.isdir(directory_path):
-			raise ValueError(f"Directory {directory} does not exist")
+			raise ValueError(f"Directory '{directory}' does not exist. Use an empty string to list the root directory.")
 
+		notes = list(note for note in os.listdir(directory_path) if note.endswith(NOTE_EXTENSION) and not note.startswith('.'))
+
+		if directory == "":
+			dir_display = "root directory"
+		else:
+			dir_display = f"directory '{directory}'"
+		
+		if len(notes) == 0:
+			summary = f"No Markdown notes found in {dir_display}.\n"
+		else:
+			summary = f"Found {len(notes)} note{'s' if len(notes) != 1 else ''} in {dir_display}:\n\n"
+			for note in sorted(notes):
+				summary += f" * `{note}`\n"
+
+		# Build URIs correctly, handling empty directory case
+		if directory:
+			uri_prefix = f"{NOTE_URI_PREFIX}/{directory}"
+			name_prefix = f"{directory}/"
+		else:
+			uri_prefix = NOTE_URI_PREFIX
+			name_prefix = ""
+		
 		return [
+			MCPToolResultTextContent(text=summary)
+		] + [
 			MCPToolResultResourceLink(
-				uri=f"{NOTE_URI_PREFIX}/{directory}/{note}",
-				name=f"{directory}/{note}",
-				description="Markdown note",
+				uri=f"{uri_prefix}/{note}",
+				name=f"{name_prefix}{note}",
+				description=f"Markdown note: {name_prefix}{note}",
 				mimeType=NOTE_MIME_TYPE,
-			) for note in os.listdir(directory_path) if note.endswith(NOTE_EXTENSION) and not note.startswith('.')
-		]
+			) for note in sorted(notes)
+ 		]
 
 
 	@mcp_tool(
 		name="read_note",
 		title="Read a note",
-		description="Read the content of the note with the given path. The result is the content of the note in Markdown format.",
+		description="""
+			Read and return the full content of a Markdown note at the specified path.
+			
+			The path parameter:
+			- Can include subdirectories separated by '/' (e.g., "projects/meeting-notes")
+			- The '.md' extension is automatically appended if not provided
+			- Leading slashes are normalized
+			- Paths containing '..' are not allowed for security reasons
+			
+			Returns the raw Markdown content of the note as a string.
+			If the note does not exist, an error will be raised with a suggestion to use 'list_notes' to find available notes.
+		""",
 		inputSchema={
 			"type": "object",
 			"properties": {
@@ -170,7 +233,7 @@ class MarkdownNotesMCPHandler():
 	)
 	async def tool_read_note(self, path):
 		if '..' in path:
-			raise ValueError("Path cannot contain '..'")
+			raise ValueError("Path cannot contain '..' (parent directory references are not allowed for security reasons)")
 
 		while path.startswith('/'):
 			path = path[1:]
@@ -180,7 +243,7 @@ class MarkdownNotesMCPHandler():
 
 		note_path = os.path.join(self.NotesDirectory, path)
 		if not os.path.isfile(note_path):
-			raise ValueError(f"Note {path} does not exist")
+			raise ValueError(f"Note '{path}' does not exist. Use 'list_notes' to see available notes.")
 
 		with open(note_path, "r") as f:
 			content = f.read()
@@ -191,13 +254,22 @@ class MarkdownNotesMCPHandler():
 	@mcp_tool(
 		name="upload_picture",
 		title="Upload a picture",
-		description="""
-			Upload a picture to the notes directory.
-			The picture path can contain subdirectories, separated by '/'.
-			Subdirectories are created if they do not exist.
-			Supported picture extensions are: {}.
-			The result is a resource link to the uploaded picture.
-		""".format(PICTURE_EXTENSIONS),
+		description=f"""
+			Upload an image file to the notes directory.
+			
+			The path parameter:
+			- Must include a filename with one of the supported extensions: {', '.join(sorted(PICTURE_EXTENSIONS))}
+			- Can include subdirectories separated by '/' (e.g., "images/screenshots/example.png")
+			- Subdirectories are automatically created if they don't exist
+			- Leading slashes are normalized
+			- Paths containing '..' are not allowed for security reasons
+			
+			The content parameter should contain the binary image data (base64-encoded when transmitted).
+			
+			Supported image formats: {', '.join(sorted(PICTURE_EXTENSIONS))}
+			
+			Returns a resource link that can be used to reference the uploaded image.
+		""",
 		inputSchema={
 			"type": "object",
 			"properties": {
@@ -208,13 +280,14 @@ class MarkdownNotesMCPHandler():
 	)
 	async def tool_upload_picture(self, path, content):
 		if '..' in path:
-			raise ValueError("Path cannot contain '..'")
+			raise ValueError("Path cannot contain '..' (parent directory references are not allowed for security reasons)")
 
 		while path.startswith('/'):
 			path = path[1:]
 
 		if not any(path.endswith(ext) for ext in PICTURE_EXTENSIONS):
-			raise ValueError(f"Unsupported picture extension. Supported extensions are: {PICTURE_EXTENSIONS}")
+			extensions_list = ', '.join(sorted(PICTURE_EXTENSIONS))
+			raise ValueError(f"Unsupported picture extension. The path must end with one of: {extensions_list}")
 
 		picture_path = os.path.join(self.NotesDirectory, path)
 		os.makedirs(os.path.dirname(picture_path), exist_ok=True)
@@ -222,11 +295,18 @@ class MarkdownNotesMCPHandler():
 		with open(picture_path, "w") as f:
 			f.write(content)
 
+		# Determine MIME type based on extension
+		mime_type = "image/jpeg"  # default
+		if path.endswith(".png"):
+			mime_type = "image/png"
+		elif path.endswith(".gif"):
+			mime_type = "image/gif"
+		
 		return MCPToolResultResourceLink(
 			uri=f"{PICTURE_URI_PREFIX}/{path}",
 			name=path,
-			description="Picture",
-			mimeType="image/jpeg",
+			description=f"Uploaded image: {path}",
+			mimeType=mime_type,
 		)
 
 	@mcp_resource_template(
@@ -239,13 +319,14 @@ class MarkdownNotesMCPHandler():
 	)
 	async def resource_template_notes(self, uri):
 		'''
-		Read the content of the resource.
+		Read the content of a note resource identified by its URI.
+		Returns the note content or None if the note doesn't exist.
 		'''
 
 		assert uri.startswith(NOTE_URI_PREFIX)
 		path = uri[len(NOTE_URI_PREFIX):]
 		if '..' in path:
-			raise ValueError("Path cannot contain '..'")
+			raise ValueError("URI path cannot contain '..' (parent directory references are not allowed for security reasons)")
 
 		while path.startswith('/'):
 			path = path[1:]
@@ -274,10 +355,18 @@ class MarkdownNotesMCPHandler():
 			for file in files:
 				if file.endswith(NOTE_EXTENSION):
 					path = root[len(self.NotesDirectory):]
+					# Handle root directory case (empty path)
+					if path:
+						uri = f"{NOTE_URI_PREFIX}/{path}/{file}"
+						name = f"{path}/{file[:-len(NOTE_EXTENSION)]}"
+					else:
+						uri = f"{NOTE_URI_PREFIX}/{file}"
+						name = file[:-len(NOTE_EXTENSION)]
+					
 					resources.append(MCPToolResultResourceLink(
-						uri=f"{NOTE_URI_PREFIX}/{path}/{file}",
-						name=f"{file[:-len(NOTE_EXTENSION)]}",
-						description="Markdown note",
+						uri=uri,
+						name=name,
+						description=f"Markdown note: {name}",
 						mimeType=NOTE_MIME_TYPE,
 					))
 		return resources
