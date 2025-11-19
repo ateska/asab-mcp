@@ -382,7 +382,7 @@ def _normalize_path(base_path, user_path):
 		user_path = user_path[1:]
 	abs_base = os.path.abspath(base_path)
 	abs_user = os.path.abspath(os.path.join(base_path, user_path))
-	if abs_user.startswith(abs_base):
+	if os.path.commonpath([abs_base, abs_user]) == abs_base:
 		return abs_user
 	else:
 		return None
