@@ -13,7 +13,7 @@ NOTE_URI_PREFIX = "note://"
 PICTURE_URI_PREFIX="img://"
 NOTE_MIME_TYPE = "text/markdown"
 NOTE_EXTENSION = ".md"
-PICTURE_EXTENSIONS = {".jpg", ".png", ".jpeg", ".gif"}
+PICTURE_EXTENSIONS = {".jpg", ".png", ".gif"}
 
 
 class MarkdownNotesMCPHandler():
@@ -63,16 +63,14 @@ class MarkdownNotesMCPHandler():
 		},
 	)
 	async def tool_create_or_update_note(self, path, content):
-		if '..' in path:
-			raise ValueError("Path cannot contain '..' (parent directory references are not allowed for security reasons)")
-
-		while path.startswith('/'):
-			path = path[1:]
 
 		if not path.endswith(NOTE_EXTENSION):
 			path += NOTE_EXTENSION
 
-		note_path = os.path.join(self.NotesDirectory, path)
+		note_path = _normalize_path(self.NotesDirectory, path)
+		if note_path is None:
+			raise ValueError("Path is not within the notes directory")
+
 		os.makedirs(os.path.dirname(note_path), exist_ok=True)
 
 		new_note = not os.path.isfile(note_path)
@@ -116,16 +114,13 @@ class MarkdownNotesMCPHandler():
 		},
 	)
 	async def tool_delete_note(self, path):
-		if '..' in path:
-			raise ValueError("Path cannot contain '..' (parent directory references are not allowed for security reasons)")
-
-		while path.startswith('/'):
-			path = path[1:]
-
 		if not path.endswith(NOTE_EXTENSION):
 			path += NOTE_EXTENSION
 
-		note_path = os.path.join(self.NotesDirectory, path)
+		note_path = _normalize_path(self.NotesDirectory, path)
+		if note_path is None:
+			raise ValueError("Path is not within the notes directory")
+
 		if not os.path.isfile(note_path):
 			raise ValueError(f"Note '{path}' does not exist. Use 'list_notes' to see available notes.")
 
@@ -138,9 +133,9 @@ class MarkdownNotesMCPHandler():
 
 	@mcp_tool(
 		name="list_notes",
-		title="List notes in a directory",
+		title="List notes in a directory, optionally including directories",
 		description="""
-			List all Markdown notes (.md files) in the specified directory.
+			List all Markdown notes (.md files) in the specified directory, optionally including directories.
 			
 			The directory parameter:
 			- Use an empty string or '/' to list notes in the root notes directory
@@ -149,6 +144,11 @@ class MarkdownNotesMCPHandler():
 			- Paths containing '..' are not allowed for security reasons
 			- Only lists direct children (does not recursively search subdirectories)
 			- Hidden files (starting with '.') are excluded
+
+			The directories parameter:
+			- If True, the list will include directories, can be used to list directories recursively
+			- If False, the list will only include notes
+			- If not provided, the list will only include notes
 			
 			Returns:
 			- A text summary listing all notes found in the directory
@@ -160,18 +160,17 @@ class MarkdownNotesMCPHandler():
 		inputSchema={
 			"type": "object",
 			"properties": {
-				"directory": {"type": "string"},
+				"directory": {"type": "string", "default": ""},
+				"directories": {"type": "boolean", "default": False},
 			},
 		},
 	)
-	async def tool_list_notes(self, directory=""):
-		if '..' in directory:
-			raise ValueError("Directory cannot contain '..' (parent directory references are not allowed for security reasons)")
+	async def tool_list_notes(self, directory='', directories=False):
 
-		while directory.startswith('/'):
-			directory = directory[1:]
+		directory_path = _normalize_path(self.NotesDirectory, directory)
+		if directory_path is None:
+			raise ValueError("Path is not within the notes directory")
 
-		directory_path = os.path.join(self.NotesDirectory, directory)
 		if not os.path.isdir(directory_path):
 			raise ValueError(f"Directory '{directory}' does not exist. Use an empty string to list the root directory.")
 
@@ -188,6 +187,12 @@ class MarkdownNotesMCPHandler():
 			summary = f"Found {len(notes)} note{'s' if len(notes) != 1 else ''} in {dir_display}:\n\n"
 			for note in sorted(notes):
 				summary += f" * `{note}`\n"
+
+		if directories:
+			dirlist = list(dir for dir in os.listdir(directory_path) if os.path.isdir(os.path.join(directory_path, dir)) and not dir.startswith('.'))
+			summary += f"\nFound {len(dirlist)} director{'ies' if len(dirlist) != 1 else 'y'} in {dir_display}:\n\n"
+			for directory in sorted(dirlist):
+				summary += f" * `{directory}`\n"
 
 		# Build URIs correctly, handling empty directory case
 		if directory:
@@ -232,16 +237,13 @@ class MarkdownNotesMCPHandler():
 		},
 	)
 	async def tool_read_note(self, path):
-		if '..' in path:
-			raise ValueError("Path cannot contain '..' (parent directory references are not allowed for security reasons)")
-
-		while path.startswith('/'):
-			path = path[1:]
-
 		if not path.endswith(NOTE_EXTENSION):
 			path += NOTE_EXTENSION
 
-		note_path = os.path.join(self.NotesDirectory, path)
+		note_path = _normalize_path(self.NotesDirectory, path)
+		if note_path is None:
+			raise ValueError("Path is not within the notes directory")
+
 		if not os.path.isfile(note_path):
 			raise ValueError(f"Note '{path}' does not exist. Use 'list_notes' to see available notes.")
 
@@ -279,28 +281,28 @@ class MarkdownNotesMCPHandler():
 		},
 	)
 	async def tool_upload_picture(self, path, content):
-		if '..' in path:
-			raise ValueError("Path cannot contain '..' (parent directory references are not allowed for security reasons)")
 
-		while path.startswith('/'):
-			path = path[1:]
+		path = _normalize_path(self.NotesDirectory, path)
+		if path is None:
+			raise ValueError("Path is not within the notes directory")
 
 		if not any(path.endswith(ext) for ext in PICTURE_EXTENSIONS):
 			extensions_list = ', '.join(sorted(PICTURE_EXTENSIONS))
 			raise ValueError(f"Unsupported picture extension. The path must end with one of: {extensions_list}")
 
-		picture_path = os.path.join(self.NotesDirectory, path)
-		os.makedirs(os.path.dirname(picture_path), exist_ok=True)
-
-		with open(picture_path, "w") as f:
+		os.makedirs(os.path.dirname(path), exist_ok=True)
+		with open(path, "wb") as f:
 			f.write(content)
 
 		# Determine MIME type based on extension
-		mime_type = "image/jpeg"  # default
+		mime_type = None
 		if path.endswith(".png"):
 			mime_type = "image/png"
+		elif path.endswith(".jpg"):
+			mime_type = "image/jpeg"
 		elif path.endswith(".gif"):
 			mime_type = "image/gif"
+		assert mime_type is not None, f"Unsupported picture extension: {path}"
 		
 		return MCPToolResultResourceLink(
 			uri=f"{PICTURE_URI_PREFIX}/{path}",
@@ -308,6 +310,7 @@ class MarkdownNotesMCPHandler():
 			description=f"Uploaded image: {path}",
 			mimeType=mime_type,
 		)
+
 
 	@mcp_resource_template(
 		uri_prefix=NOTE_URI_PREFIX,
@@ -324,17 +327,15 @@ class MarkdownNotesMCPHandler():
 		'''
 
 		assert uri.startswith(NOTE_URI_PREFIX)
-		path = uri[len(NOTE_URI_PREFIX):]
-		if '..' in path:
-			raise ValueError("URI path cannot contain '..' (parent directory references are not allowed for security reasons)")
+		note_path = uri[len(NOTE_URI_PREFIX):]
 
-		while path.startswith('/'):
-			path = path[1:]
+		if not note_path.endswith(NOTE_EXTENSION):
+			note_path += NOTE_EXTENSION
 
-		if not path.endswith(NOTE_EXTENSION):
-			path += NOTE_EXTENSION
+		note_path = _normalize_path(self.NotesDirectory, note_path)
+		if note_path is None:
+			raise ValueError("Path is not within the notes directory")
 
-		note_path = os.path.join(self.NotesDirectory, path)
 		if not os.path.isfile(note_path):
 			L.warning("Note not found", struct_data={"uri": uri})
 			return None
@@ -370,3 +371,17 @@ class MarkdownNotesMCPHandler():
 						mimeType=NOTE_MIME_TYPE,
 					))
 		return resources
+
+
+def _normalize_path(base_path, user_path):
+	'''
+	Normalize the path to be within the base path.
+	'''
+	while user_path.startswith('/'):
+		user_path = user_path[1:]
+	abs_base = os.path.abspath(base_path)
+	abs_user = os.path.abspath(os.path.join(base_path, user_path))
+	if os.path.commonpath([abs_base, abs_user]) == abs_base:
+		return abs_user
+	else:
+		return None
