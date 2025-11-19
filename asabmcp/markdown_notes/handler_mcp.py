@@ -302,8 +302,7 @@ class MarkdownNotesMCPHandler():
 			mime_type = "image/jpeg"
 		elif path.endswith(".gif"):
 			mime_type = "image/gif"
-		if mime_type is None:
-			raise ValueError(f"Unsupported picture extension: {path}")
+		assert mime_type is not None, f"Unsupported picture extension: {path}"
 		
 		return MCPToolResultResourceLink(
 			uri=f"{PICTURE_URI_PREFIX}/{path}",
