@@ -291,7 +291,7 @@ class MarkdownNotesMCPHandler():
 			raise ValueError(f"Unsupported picture extension. The path must end with one of: {extensions_list}")
 
 		os.makedirs(os.path.dirname(path), exist_ok=True)
-		with open(path, "w") as f:
+		with open(path, "wb") as f:
 			f.write(content)
 
 		# Determine MIME type based on extension
